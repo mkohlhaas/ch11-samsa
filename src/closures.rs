@@ -5,7 +5,10 @@
 
 use crate::message::{Message, current_timestamp};
 use std::collections::HashMap;
+use std::error::Error;
+use std::hash::Hash;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// Configurable message filter using closures
 pub struct MessageFilter<F> {
@@ -231,8 +234,7 @@ pub enum SystemEvent {
 }
 
 /// Processing pipeline using closures
-type PipelineStage<T> =
-    Box<dyn Fn(T) -> Result<T, Box<dyn std::error::Error + Send + Sync>> + Send + Sync>;
+type PipelineStage<T> = Box<dyn Fn(T) -> Result<T, Box<dyn Error + Send + Sync>> + Send + Sync>;
 
 pub struct Pipeline<T> {
     stages: Vec<PipelineStage<T>>,
@@ -257,7 +259,7 @@ where
 
     pub fn add_stage<F>(mut self, stage: F) -> Self
     where
-        F: Fn(T) -> Result<T, Box<dyn std::error::Error + Send + Sync>> + Send + Sync + 'static,
+        F: Fn(T) -> Result<T, Box<dyn Error + Send + Sync>> + Send + Sync + 'static,
     {
         self.stages.push(Box::new(stage));
         self
@@ -283,7 +285,7 @@ where
         })
     }
 
-    pub fn execute(&self, input: T) -> Result<T, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn execute(&self, input: T) -> Result<T, Box<dyn Error + Send + Sync>> {
         self.stages.iter().try_fold(input, |acc, stage| stage(acc))
     }
 }
@@ -353,7 +355,7 @@ pub struct Cache<K, V, F> {
 
 impl<K, V, F> Cache<K, V, F>
 where
-    K: std::hash::Hash + Eq + Clone,
+    K: Hash + Eq + Clone,
     V: Clone,
     F: Fn(&K) -> V,
 {
@@ -399,15 +401,15 @@ where
 /// Rate limiting using closures
 pub struct RateLimiter<F> {
     predicate: F,
-    last_call: Arc<Mutex<Option<std::time::Instant>>>,
-    interval: std::time::Duration,
+    last_call: Arc<Mutex<Option<Instant>>>,
+    interval: Duration,
 }
 
 impl<F> RateLimiter<F>
 where
     F: Fn(),
 {
-    pub fn new(predicate: F, interval: std::time::Duration) -> Self {
+    pub fn new(predicate: F, interval: Duration) -> Self {
         Self {
             predicate,
             last_call: Arc::new(Mutex::new(None)),
@@ -417,7 +419,7 @@ where
 
     pub fn call(&self) {
         let mut last_call = self.last_call.lock().unwrap();
-        let now = std::time::Instant::now();
+        let now = Instant::now();
 
         if let Some(last) = *last_call {
             if now.duration_since(last) < self.interval {
@@ -512,5 +514,114 @@ mod tests {
 
         let composed = compose(|x: i32| x + 1, |x: i32| x * 2);
         assert_eq!(composed(5), 12); // (5 + 1) * 2 = 12
+    }
+
+    #[test]
+    fn test_message_filter_or() {
+        let filter_a = MessageFilter::new("A".to_string(), |msg: &Message| msg.topic.starts_with("a"));
+        let filter_b = MessageFilter::new("B".to_string(), |msg: &Message| msg.topic.starts_with("b"));
+
+        let combined = filter_a.or(filter_b);
+
+        let msg_a = Message::new("alpha", None, b"data");
+        let msg_b = Message::new("beta", None, b"data");
+        let msg_c = Message::new("gamma", None, b"data");
+
+        assert!(combined.matches(&msg_a));
+        assert!(combined.matches(&msg_b));
+        assert!(!combined.matches(&msg_c));
+        assert_eq!(combined.name(), "A OR B");
+    }
+
+    #[test]
+    fn test_with_retry_success() {
+        let call_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count_clone = call_count.clone();
+        let result = with_retry(
+            move || {
+                count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if count_clone.load(std::sync::atomic::Ordering::SeqCst) < 3 {
+                    Err("not yet")
+                } else {
+                    Ok("success")
+                }
+            },
+            5,
+        );
+        assert_eq!(result, Ok("success"));
+        assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn test_with_retry_exhaustion() {
+        let result = with_retry(|| -> Result<(), &str> { Err("always fail") }, 3);
+        assert_eq!(result, Err("always fail"));
+    }
+
+    #[test]
+    fn test_rate_limiter() {
+        use std::thread;
+        use std::time::Duration;
+
+        let call_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count_clone = call_count.clone();
+
+        let limiter = RateLimiter::new(
+            move || {
+                count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            },
+            Duration::from_millis(50),
+        );
+
+        limiter.call();
+        limiter.call(); // should be rate limited
+
+        thread::sleep(Duration::from_millis(60));
+        limiter.call();
+
+        assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn test_configurable_processor() {
+        let processor = create_configurable_processor(|msg: &mut Message| {
+            msg.topic = msg.topic.to_uppercase();
+        });
+
+        let msg = Message::new("hello", None, b"data");
+        let result = processor(msg);
+        assert_eq!(result.topic, "HELLO");
+    }
+
+    #[test]
+    fn test_pipeline_validation_failure() {
+        let pipeline = create_message_pipeline();
+
+        let empty_topic_msg = Message::new("", None, b"test");
+        let result = pipeline.execute(empty_topic_msg);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_message_filters() {
+        let (large, system, recent) = create_message_filters();
+
+        let large_msg = Message::new("test", None, vec![0u8; 2000]);
+        assert!(large.matches(&large_msg));
+
+        let system_msg = Message::new("system.alerts", None, b"data");
+        assert!(system.matches(&system_msg));
+
+        let mut recent_msg = Message::new("test", None, b"data");
+        recent_msg.timestamp = current_timestamp();
+        assert!(recent.matches(&recent_msg));
+
+        let mut stale_msg = Message::new("test", None, b"data");
+        stale_msg.timestamp = 0;
+        assert!(!recent.matches(&stale_msg));
+
+        let small_msg = Message::new("test", None, b"small");
+        assert!(!large.matches(&small_msg));
+        assert!(!system.matches(&small_msg));
     }
 }

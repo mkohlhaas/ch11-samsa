@@ -71,8 +71,11 @@ fn main() {
 }
 
 fn demonstrate_function_pipelines() -> Result<(), Box<dyn Error>> {
+    use SubscriptionType::*;
+
+    println!("\n=============================================");
     println!("1. Function Pipelines for Data Transformation");
-    println!("============================================");
+    println!("=============================================");
 
     // Create subscription events for processing
     let events = vec![
@@ -80,51 +83,61 @@ fn demonstrate_function_pipelines() -> Result<(), Box<dyn Error>> {
             user_id: 123,
             topic: "news.technology".to_string(),
             timestamp: current_timestamp(),
-            subscription_type: SubscriptionType::Subscribe,
+            subscription_type: Subscribe,
         },
         SubscriptionEvent {
             user_id: 456,
             topic: "news.sports".to_string(),
             timestamp: current_timestamp(),
-            subscription_type: SubscriptionType::Subscribe,
+            subscription_type: Subscribe,
         },
         SubscriptionEvent {
             user_id: 789,
             topic: "alerts.system".to_string(),
             timestamp: current_timestamp() - 7200, // 2 hours ago
-            subscription_type: SubscriptionType::Subscribe,
+            subscription_type: Subscribe,
         },
         SubscriptionEvent {
             user_id: 0, // Invalid
             topic: "".to_string(),
             timestamp: current_timestamp(),
-            subscription_type: SubscriptionType::Invalid,
+            subscription_type: Invalid,
         },
     ];
 
-    // Process using basic pipeline
-    let stats = process_subscription_events(events.clone());
-    println!("✓ Processed {} valid subscriptions", stats.total_valid);
-    println!("  Topics: {:?}", stats.subscriptions_by_topic);
+    {
+        // Process using basic pipeline
+        let stats = process_subscription_events(events.clone());
+        println!("✓ Processed {} valid subscriptions", stats.total_valid);
+        println!("  Topics: {:?}", stats.subscriptions_by_topic);
+    }
 
-    // Process recent subscriptions using custom combinators
-    let cutoff = current_timestamp() - 3600; // 1 hour ago
-    let recent_stats = analyze_recent_subscriptions(events, cutoff);
-    println!("✓ Recent subscriptions by topic: {:?}", recent_stats);
+    println!("---------------------------------------------");
 
-    // Demonstrate message processing pipeline
-    let messages = vec![
-        Message::new("USER.LOGIN", None, b"User 123 logged in"),
-        Message::new("system.alert", None, b"Critical error occurred"),
-        Message::new("api.request", None, vec![0u8; 60000]), // Large message
-    ];
+    {
+        // Process recent subscriptions using custom combinators
+        let cutoff = current_timestamp() - 3600; // 1 hour ago
+        let recent_stats = analyze_recent_subscriptions(events, cutoff);
+        println!("✓ Recent subscriptions by topic: {:?}", recent_stats);
+    }
 
-    let pipeline = create_message_pipeline();
+    println!("---------------------------------------------");
 
-    for msg in messages {
-        match pipeline.execute(msg) {
-            Ok(processed) => println!("✓ Processed message: {}", processed.topic),
-            Err(e) => println!("✗ Pipeline error: {}", e),
+    {
+        // Demonstrate message processing pipeline
+        let messages = vec![
+            Message::new("USER.LOGIN", None, b"User 123 logged in"),
+            Message::new("system.alert", None, b"Critical error occurred"),
+            Message::new("api.request", None, vec![0u8; 60000]), // Large message
+        ];
+
+        let pipeline = create_message_pipeline();
+
+        for msg in messages {
+            match pipeline.execute(msg) {
+                Ok(processed) => println!("✓ Processed message: {}", processed.topic),
+                Err(e) => println!("✗ Pipeline error: {}", e),
+            }
         }
     }
 
@@ -133,8 +146,9 @@ fn demonstrate_function_pipelines() -> Result<(), Box<dyn Error>> {
 }
 
 fn demonstrate_type_classes() -> Result<(), Box<dyn Error>> {
+    println!("\n===========================");
     println!("2. Generics as Type Classes");
-    println!("===========================");
+    println!("===========================\n");
 
     // Create subscription manager
     let mut manager = SubscriptionManager::new();

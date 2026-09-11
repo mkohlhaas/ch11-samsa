@@ -60,7 +60,7 @@ pub enum DeliveryError {
 }
 
 /// State type markers
-pub mod states {
+pub mod state {
     #[derive(Debug)]
     pub struct Pending;
 
@@ -84,7 +84,7 @@ pub struct Subscription<S> {
     _state: PhantomData<S>,
 }
 
-impl Subscription<states::Pending> {
+impl Subscription<state::Pending> {
     pub fn new(id: u64, user_id: u64, topic: String) -> Self {
         Self {
             id,
@@ -96,8 +96,8 @@ impl Subscription<states::Pending> {
     }
 }
 
-impl Activatable for Subscription<states::Pending> {
-    type Output = Subscription<states::Active>;
+impl Activatable for Subscription<state::Pending> {
+    type Output = Subscription<state::Active>;
 
     fn activate(self) -> Result<Self::Output, ActivationError> {
         if self.user_id == 0 {
@@ -118,8 +118,8 @@ impl Activatable for Subscription<states::Pending> {
     }
 }
 
-impl Suspendable for Subscription<states::Active> {
-    type Output = Subscription<states::Suspended>;
+impl Suspendable for Subscription<state::Active> {
+    type Output = Subscription<state::Suspended>;
 
     fn suspend(self, _reason: String) -> Self::Output {
         Subscription {
@@ -132,8 +132,8 @@ impl Suspendable for Subscription<states::Active> {
     }
 }
 
-impl Cancellable for Subscription<states::Active> {
-    type Output = Subscription<states::Cancelled>;
+impl Cancellable for Subscription<state::Active> {
+    type Output = Subscription<state::Cancelled>;
 
     fn cancel(self, _reason: String) -> Self::Output {
         Subscription {
@@ -146,8 +146,8 @@ impl Cancellable for Subscription<states::Active> {
     }
 }
 
-impl Cancellable for Subscription<states::Suspended> {
-    type Output = Subscription<states::Cancelled>;
+impl Cancellable for Subscription<state::Suspended> {
+    type Output = Subscription<state::Cancelled>;
 
     fn cancel(self, _reason: String) -> Self::Output {
         Subscription {
@@ -160,7 +160,7 @@ impl Cancellable for Subscription<states::Suspended> {
     }
 }
 
-impl MessageDeliverable for Subscription<states::Active> {
+impl MessageDeliverable for Subscription<state::Active> {
     fn can_deliver_messages(&self) -> bool {
         true
     }
@@ -174,7 +174,7 @@ impl MessageDeliverable for Subscription<states::Active> {
     }
 }
 
-impl MessageDeliverable for Subscription<states::Suspended> {
+impl MessageDeliverable for Subscription<state::Suspended> {
     fn can_deliver_messages(&self) -> bool {
         false
     }
@@ -188,9 +188,9 @@ impl MessageDeliverable for Subscription<states::Suspended> {
 pub fn cancel_subscription_with_audit<S>(
     subscription: Subscription<S>,
     reason: String,
-) -> Subscription<states::Cancelled>
+) -> Subscription<state::Cancelled>
 where
-    Subscription<S>: Cancellable<Output = Subscription<states::Cancelled>>,
+    Subscription<S>: Cancellable<Output = Subscription<state::Cancelled>>,
 {
     println!(
         "Auditing cancellation of subscription {}: {}",
@@ -330,9 +330,9 @@ impl<T> Filterable for Vec<T> {
 
 /// Subscription manager using type classes
 pub struct SubscriptionManager {
-    active_subscriptions: Vec<Subscription<states::Active>>,
-    suspended_subscriptions: Vec<Subscription<states::Suspended>>,
-    cancelled_subscriptions: Vec<Subscription<states::Cancelled>>,
+    active_subscriptions: Vec<Subscription<state::Active>>,
+    suspended_subscriptions: Vec<Subscription<state::Suspended>>,
+    cancelled_subscriptions: Vec<Subscription<state::Cancelled>>,
 }
 
 impl Default for SubscriptionManager {
@@ -452,5 +452,74 @@ mod tests {
         let items = vec![1, 2, 3, 4, 5];
         let evens = items.filter(|x| x % 2 == 0);
         assert_eq!(evens, vec![2, 4]);
+    }
+
+    #[test]
+    fn test_activation_errors() {
+        let invalid_user = Subscription::new(1, 0, "topic".to_string());
+        assert!(matches!(
+            invalid_user.activate(),
+            Err(ActivationError::InvalidUser)
+        ));
+
+        let empty_topic = Subscription::new(1, 100, "".to_string());
+        assert!(matches!(
+            empty_topic.activate(),
+            Err(ActivationError::TopicNotFound)
+        ));
+
+        let valid = Subscription::new(1, 100, "topic".to_string());
+        assert!(valid.activate().is_ok());
+    }
+
+    #[test]
+    fn test_monad_operations() {
+        let ok_val: Result<i32, &str> = Ok(5);
+        let result = ok_val.bind(|x| x * 2);
+        assert_eq!(result, 10);
+
+        let pure_val = <Result<i32, &str> as Monad>::pure(42);
+        assert_eq!(pure_val.unwrap(), 42);
+    }
+
+    #[test]
+    fn test_fold_right() {
+        let numbers = vec![1, 2, 3, 4, 5];
+        let result = numbers.fold_right(0, |acc, x| acc + x);
+        assert_eq!(result, 15);
+    }
+
+    #[test]
+    fn test_subscription_manager_operations() {
+        let mut manager = SubscriptionManager::new();
+
+        let id = manager.create_subscription(100, "test.topic".to_string());
+        assert!(id.is_ok());
+        let id = id.unwrap();
+
+        assert!(manager.suspend_subscription(id, "Maintenance".to_string()).is_ok());
+        assert!(manager.cancel_subscription(id, "Done".to_string()).is_ok());
+    }
+
+    #[test]
+    fn test_process_option_string() {
+        let some_val = Some("hello".to_string());
+        assert_eq!(process_option_string(some_val), Some(5));
+
+        let none_val: Option<String> = None;
+        assert_eq!(process_option_string(none_val), None);
+    }
+
+    #[test]
+    fn test_message_deliverable_trait() {
+        let pending = Subscription::new(1, 100, "topic".to_string());
+        let active = pending.activate().unwrap();
+
+        assert!(active.can_deliver_messages());
+        assert!(active.deliver_message("test").is_ok());
+
+        let suspended = active.suspend("reason".to_string());
+        assert!(!suspended.can_deliver_messages());
+        assert!(suspended.deliver_message("test").is_err());
     }
 }
