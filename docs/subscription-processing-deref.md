@@ -103,7 +103,35 @@ So the chain is: `&events` (borrowed `Vec`) → `events.iter()`
 implements `SubscriptionProcessing` via the blanket impl → combinators work, no
 clones.
 
-## 6. Without the `Deref` trick, how would the code look?
+## 6. The exact chain from `analyze_recent_subscriptions(&events, cutoff)` to the result
+
+Tracing the call in `src/pipeline.rs`:
+
+1. **`&events`** — `&Vec<SubscriptionEvent>`; deref-coerces to
+   `&[SubscriptionEvent]` (the parameter type).
+2. **`events.iter()`** (`slice::Iter<'_, SubscriptionEvent>`,
+   `Item = &SubscriptionEvent`) — it is a `Sized` iterator whose items deref to
+   `SubscriptionEvent`, so it satisfies the blanket impl and now has the trait
+   methods.
+3. **`.recent_events(cutoff)`** (trait method) — `.filter(|e| e.timestamp >=
+   cutoff)`; item type stays `&SubscriptionEvent`. Drops events older than the
+   cutoff.
+4. **`.valid_subscriptions()`** (trait method) — `.filter(|e| e.is_valid())`
+   then `.filter(|e| e.is_subscription())`; still `&SubscriptionEvent`. Each
+   filter derefs the ref to call `is_valid()` / `is_subscription()`.
+5. **`.count_by_topic()`** (trait method) — `.fold(HashMap::new(), ...)`; for
+   each surviving `&SubscriptionEvent`, does
+   `*acc.entry(event.topic.clone()).or_insert(0) += 1`. `event.topic`
+   auto-derefs to the `String`, `.clone()` copies just the topic string (avoids
+   cloning whole events).
+6. **Result** — `HashMap<String, usize>` mapping each topic to the number of
+   recent, valid, subscribe events.
+
+Data flow: borrowed slice → `slice::Iter` (a `SubscriptionProcessing` via the
+blanket impl) → `Filter` (recent) → `Filter` (valid + subscribe) → fold into the
+topic-count `HashMap`.
+
+## 7. Without the `Deref` trick, how would the code look?
 
 Without `Deref`, `SubscriptionProcessing` would need owned items again, so
 `analyze_recent_subscriptions` would have to clone to feed it a `slice::Iter`:
