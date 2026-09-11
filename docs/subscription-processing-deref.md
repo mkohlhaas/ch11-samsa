@@ -33,6 +33,26 @@ enough to read them, then discards the owned value immediately. The underlying
 `SubscriptionEvent`s stay in the `events` Vec the whole time. `Deref` lets the
 borrowed item behave like the owned type; it does not materialize owned copies.
 
+So Deref doesn't turn refs into owned values; it lets the compiler treat a
+&SubscriptionEvent as if the SubscriptionEvent methods/fields existed on it,
+resolving through &T: Deref<Target = T>. The underlying objects stay in the
+events Vec the whole time!
+
+### Are we dereferencing from &SubscriptionEvent to SubscriptionEvent ?
+
+No — that's the whole point. We never produce an owned SubscriptionEvent; the
+items stay borrowed (&SubscriptionEvent) end-to-end.
+
+When a closure receives &&SubscriptionEvent (from the filter), autoderef
+happens only on the fly to call .is_valid() or read .timestamp, and the owned
+value is immediately discarded. Same for event.topic.clone() — it derefs the
+ref just long enough to make a new String.
+
+So Deref doesn't turn refs into owned values; it lets the compiler treat a
+&SubscriptionEvent as if the SubscriptionEvent methods/fields existed on it,
+resolving through &T: Deref<Target = T>. The underlying objects stay in the
+events Vec the whole time.
+
 ### Alternatives considered
 
 - `Borrow<SubscriptionEvent>` — implemented reflexively for `SubscriptionEvent`

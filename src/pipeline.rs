@@ -46,12 +46,12 @@ where
     Self::Item: Deref<Target = SubscriptionEvent>,
 {
     // Iterators //
+    fn recent_events(self, cutoff_timestamp: u64) -> impl Iterator<Item = Self::Item> {
+        self.filter(move |event| event.timestamp >= cutoff_timestamp)
+    }
     fn valid_subscriptions(self) -> impl Iterator<Item = Self::Item> {
         self.filter(|event| event.is_valid())
             .filter(|event| event.is_subscription())
-    }
-    fn recent_events(self, cutoff_timestamp: u64) -> impl Iterator<Item = Self::Item> {
-        self.filter(move |event| event.timestamp >= cutoff_timestamp)
     }
 
     // HashMap result //
@@ -86,10 +86,14 @@ pub fn process_subscription_events(events: &[SubscriptionEvent]) -> Subscription
     }
 }
 
+// blanket implementation
+// applies to e.g., events.iter() (slice::Iter<'_, SubscriptionEvent>, Item = &SubscriptionEvent)
+// -> it is a Sized iterator whose items deref to SubscriptionEvent, so it satisfies the blanket impl
+// and now has the trait methods
 impl<I> SubscriptionProcessing for I
 where
     I: Iterator + Sized,
-    I::Item: Deref<Target = SubscriptionEvent>,
+    I::Item: Deref<Target = SubscriptionEvent>, // NOTE: autoderef happens only on the fly, e.g. to call .is_valid(), and the owned value is immediately discarded.
 {
 }
 
