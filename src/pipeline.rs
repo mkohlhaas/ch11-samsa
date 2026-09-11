@@ -5,13 +5,13 @@
 
 use crate::message::{Event, Message, current_timestamp};
 use std::collections::HashMap;
+use std::ops::Deref;
 
 /// Statistics about subscription events
 #[derive(Debug, Default)]
 pub struct SubscriptionStats {
     pub total_valid: usize,
-    pub subscriptions_by_topic: HashMap<String, usize>,
-    pub recent_count: usize,
+    pub subscriptions_by_topic: HashMap<String, usize>, // topic -> size
 }
 
 /// A subscription event in the system
@@ -20,11 +20,11 @@ pub struct SubscriptionEvent {
     pub user_id: u64,
     pub topic: String,
     pub timestamp: u64,
-    pub subscription_type: SubscriptionType,
+    pub event_type: EventType,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum SubscriptionType {
+pub enum EventType {
     Subscribe,
     Unsubscribe,
     Invalid,
@@ -32,38 +32,39 @@ pub enum SubscriptionType {
 
 impl SubscriptionEvent {
     pub fn is_valid(&self) -> bool {
-        self.subscription_type != SubscriptionType::Invalid
-            && !self.topic.is_empty()
-            && self.user_id > 0
+        self.event_type != EventType::Invalid && !self.topic.is_empty() && self.user_id > 0
     }
 
     pub fn is_subscription(&self) -> bool {
-        self.subscription_type == SubscriptionType::Subscribe
+        self.event_type == EventType::Subscribe
     }
 }
 
 /// Extension trait for subscription event processing
-pub trait SubscriptionProcessing: Iterator<Item = SubscriptionEvent> + Sized {
+pub trait SubscriptionProcessing: Iterator + Sized
+where
+    Self::Item: Deref<Target = SubscriptionEvent>,
+{
     // Iterators //
-    fn valid_subscriptions(self) -> impl Iterator<Item = SubscriptionEvent> {
+    fn valid_subscriptions(self) -> impl Iterator<Item = Self::Item> {
         self.filter(|event| event.is_valid())
             .filter(|event| event.is_subscription())
     }
-    fn recent_events(self, cutoff_timestamp: u64) -> impl Iterator<Item = SubscriptionEvent> {
+    fn recent_events(self, cutoff_timestamp: u64) -> impl Iterator<Item = Self::Item> {
         self.filter(move |event| event.timestamp >= cutoff_timestamp)
     }
 
-    // Result //
+    // HashMap result //
     fn count_by_topic(self) -> HashMap<String, usize> {
         self.fold(HashMap::new(), |mut acc, event| {
-            *acc.entry(event.topic).or_insert(0) += 1;
+            *acc.entry(event.topic.clone()).or_insert(0) += 1;
             acc
         })
     }
 }
 
 /// Process subscription events using function pipelines
-pub fn process_subscription_events(events: Vec<SubscriptionEvent>) -> SubscriptionStats {
+pub fn process_subscription_events(events: &[SubscriptionEvent]) -> SubscriptionStats {
     let valid_events: Vec<_> = events
         .iter()
         .filter(|event| event.is_valid())
@@ -82,19 +83,23 @@ pub fn process_subscription_events(events: Vec<SubscriptionEvent>) -> Subscripti
     SubscriptionStats {
         total_valid: valid_events.len(),
         subscriptions_by_topic,
-        recent_count: 0,
     }
 }
 
-impl<I> SubscriptionProcessing for I where I: Iterator<Item = SubscriptionEvent> {}
+impl<I> SubscriptionProcessing for I
+where
+    I: Iterator + Sized,
+    I::Item: Deref<Target = SubscriptionEvent>,
+{
+}
 
 /// Process recent subscriptions using custom combinators
 pub fn analyze_recent_subscriptions(
-    events: Vec<SubscriptionEvent>,
+    events: &[SubscriptionEvent],
     cutoff_timestamp: u64,
 ) -> HashMap<String, usize> {
     events
-        .into_iter()
+        .iter()
         .recent_events(cutoff_timestamp)
         .valid_subscriptions()
         .count_by_topic()
@@ -298,23 +303,23 @@ mod tests {
                 user_id: 1,
                 topic: "news".to_string(),
                 timestamp: 100,
-                subscription_type: SubscriptionType::Subscribe,
+                event_type: EventType::Subscribe,
             },
             SubscriptionEvent {
                 user_id: 2,
                 topic: "news".to_string(),
                 timestamp: 200,
-                subscription_type: SubscriptionType::Subscribe,
+                event_type: EventType::Subscribe,
             },
             SubscriptionEvent {
                 user_id: 3,
                 topic: "sports".to_string(),
                 timestamp: 300,
-                subscription_type: SubscriptionType::Subscribe,
+                event_type: EventType::Subscribe,
             },
         ];
 
-        let stats = process_subscription_events(events);
+        let stats = process_subscription_events(&events);
         assert_eq!(stats.total_valid, 3);
         assert_eq!(stats.subscriptions_by_topic.get("news"), Some(&2));
         assert_eq!(stats.subscriptions_by_topic.get("sports"), Some(&1));
@@ -338,7 +343,7 @@ mod tests {
             user_id: 1,
             topic: "news".to_string(),
             timestamp: 100,
-            subscription_type: SubscriptionType::Subscribe,
+            event_type: EventType::Subscribe,
         };
         assert!(valid.is_valid());
         assert!(valid.is_subscription());
@@ -347,7 +352,7 @@ mod tests {
             user_id: 0,
             topic: "news".to_string(),
             timestamp: 100,
-            subscription_type: SubscriptionType::Subscribe,
+            event_type: EventType::Subscribe,
         };
         assert!(!invalid_user.is_valid());
 
@@ -355,7 +360,7 @@ mod tests {
             user_id: 1,
             topic: "".to_string(),
             timestamp: 100,
-            subscription_type: SubscriptionType::Subscribe,
+            event_type: EventType::Subscribe,
         };
         assert!(!empty_topic.is_valid());
 
@@ -363,7 +368,7 @@ mod tests {
             user_id: 1,
             topic: "news".to_string(),
             timestamp: 100,
-            subscription_type: SubscriptionType::Unsubscribe,
+            event_type: EventType::Unsubscribe,
         };
         assert!(unsubscribe.is_valid());
         assert!(!unsubscribe.is_subscription());
@@ -372,7 +377,7 @@ mod tests {
             user_id: 1,
             topic: "news".to_string(),
             timestamp: 100,
-            subscription_type: SubscriptionType::Invalid,
+            event_type: EventType::Invalid,
         };
         assert!(!invalid_type.is_valid());
     }
@@ -384,29 +389,29 @@ mod tests {
                 user_id: 1,
                 topic: "news".to_string(),
                 timestamp: 50,
-                subscription_type: SubscriptionType::Subscribe,
+                event_type: EventType::Subscribe,
             },
             SubscriptionEvent {
                 user_id: 2,
                 topic: "news".to_string(),
                 timestamp: 150,
-                subscription_type: SubscriptionType::Subscribe,
+                event_type: EventType::Subscribe,
             },
             SubscriptionEvent {
                 user_id: 3,
                 topic: "sports".to_string(),
                 timestamp: 200,
-                subscription_type: SubscriptionType::Subscribe,
+                event_type: EventType::Subscribe,
             },
             SubscriptionEvent {
                 user_id: 4,
                 topic: "sports".to_string(),
                 timestamp: 250,
-                subscription_type: SubscriptionType::Unsubscribe,
+                event_type: EventType::Unsubscribe,
             },
         ];
 
-        let result = analyze_recent_subscriptions(events, 100);
+        let result = analyze_recent_subscriptions(&events, 100);
         assert_eq!(result.get("news"), Some(&1));
         assert_eq!(result.get("sports"), Some(&1));
     }
@@ -477,7 +482,7 @@ mod tests {
     #[test]
     fn test_empty_events() {
         let events: Vec<SubscriptionEvent> = vec![];
-        let stats = process_subscription_events(events);
+        let stats = process_subscription_events(&events);
         assert_eq!(stats.total_valid, 0);
         assert!(stats.subscriptions_by_topic.is_empty());
     }

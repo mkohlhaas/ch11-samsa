@@ -71,7 +71,7 @@ fn main() {
 }
 
 fn demonstrate_function_pipelines() -> Result<(), Box<dyn Error>> {
-    use SubscriptionType::*;
+    use EventType::*;
 
     println!("\n=============================================");
     println!("1. Function Pipelines for Data Transformation");
@@ -83,31 +83,31 @@ fn demonstrate_function_pipelines() -> Result<(), Box<dyn Error>> {
             user_id: 123,
             topic: "news.technology".to_string(),
             timestamp: current_timestamp(),
-            subscription_type: Subscribe,
+            event_type: Subscribe,
         },
         SubscriptionEvent {
             user_id: 456,
             topic: "news.sports".to_string(),
             timestamp: current_timestamp(),
-            subscription_type: Subscribe,
+            event_type: Subscribe,
         },
         SubscriptionEvent {
             user_id: 789,
             topic: "alerts.system".to_string(),
             timestamp: current_timestamp() - 7200, // 2 hours ago
-            subscription_type: Subscribe,
+            event_type: Subscribe,
         },
         SubscriptionEvent {
             user_id: 0, // Invalid
             topic: "".to_string(),
             timestamp: current_timestamp(),
-            subscription_type: Invalid,
+            event_type: Invalid,
         },
     ];
 
     {
         // Process using basic pipeline
-        let stats = process_subscription_events(events.clone());
+        let stats = process_subscription_events(&events);
         println!("✓ Processed {} valid subscriptions", stats.total_valid);
         println!("  Topics: {:?}", stats.subscriptions_by_topic);
     }
@@ -117,7 +117,7 @@ fn demonstrate_function_pipelines() -> Result<(), Box<dyn Error>> {
     {
         // Process recent subscriptions using custom combinators
         let cutoff = current_timestamp() - 3600; // 1 hour ago
-        let recent_stats = analyze_recent_subscriptions(events, cutoff);
+        let recent_stats = analyze_recent_subscriptions(&events, cutoff);
         println!("✓ Recent subscriptions by topic: {:?}", recent_stats);
     }
 
@@ -392,10 +392,10 @@ mod tests {
             user_id: 1,
             topic: "test".to_string(),
             timestamp: current_timestamp(),
-            subscription_type: SubscriptionType::Subscribe,
+            event_type: EventType::Subscribe,
         }];
 
-        let stats = process_subscription_events(events);
+        let stats = process_subscription_events(&events);
         assert_eq!(stats.total_valid, 1);
 
         // Test type classes
