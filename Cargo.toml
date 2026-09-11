@@ -21,3 +21,7 @@ path = "examples/type_system_patterns.rs"
 name = "functional_patterns"
 path = "examples/functional_patterns.rs"
 
+[[example]]
+name = "iterator_trait_deref"
+path = "examples/iterator_trait_deref.rs"
+
