@@ -25,6 +25,14 @@ combinators work generically on borrowed items because:
 - Items stay borrowed end-to-end: the filter combinators pass `Self::Item`
   through unchanged, so no clones of the whole event occur.
 
+Note: we are **not** dereferencing `&SubscriptionEvent` into an owned
+`SubscriptionEvent`. Autoderef happens only *on the fly* — when a filter
+closure receives a `&Self::Item` (i.e. `&&SubscriptionEvent`), the compiler
+resolves `.is_valid()` or `.timestamp` through `&T: Deref<Target = T>` long
+enough to read them, then discards the owned value immediately. The underlying
+`SubscriptionEvent`s stay in the `events` Vec the whole time. `Deref` lets the
+borrowed item behave like the owned type; it does not materialize owned copies.
+
 ### Alternatives considered
 
 - `Borrow<SubscriptionEvent>` — implemented reflexively for `SubscriptionEvent`
