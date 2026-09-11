@@ -12,26 +12,65 @@ use samsa::pipeline::*;
 use samsa::type_classes::*;
 use samsa::*;
 use std::collections::HashMap;
+use std::error::Error;
+use std::io::{self, BufRead};
+use std::result::Result;
 
-fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+fn main() {
+    let stdin = io::stdin();
+
     println!("=== Samsa Functional Programming Patterns Demo ===\n");
 
-    // 1. Function Pipelines
-    demonstrate_function_pipelines()?;
+    loop {
+        println!("Choose a demo to run:");
+        println!("  1. Function Pipelines");
+        println!("  2. Generics as Type Classes");
+        println!("  3. Advanced Pattern Matching");
+        println!("  4. Closure Patterns");
+        println!("  Ctrl+D to exit\n");
+        print!("> ");
 
-    // 2. Generics as Type Classes
-    demonstrate_type_classes()?;
-
-    // 3. Advanced Pattern Matching
-    demonstrate_pattern_matching()?;
-
-    // 4. Closure Patterns
-    demonstrate_closure_patterns()?;
-
-    Ok(())
+        let mut input = String::new();
+        match stdin.lock().read_line(&mut input) {
+            Ok(0) => {
+                println!("\nGoodbye!");
+                break;
+            }
+            Ok(_) => {
+                let input = input.trim();
+                match input {
+                    "1" => {
+                        if let Err(e) = demonstrate_function_pipelines() {
+                            println!("Error: {}\n", e);
+                        }
+                    }
+                    "2" => {
+                        if let Err(e) = demonstrate_type_classes() {
+                            println!("Error: {}\n", e);
+                        }
+                    }
+                    "3" => {
+                        if let Err(e) = demonstrate_pattern_matching() {
+                            println!("Error: {}\n", e);
+                        }
+                    }
+                    "4" => {
+                        if let Err(e) = demonstrate_closure_patterns() {
+                            println!("Error: {}\n", e);
+                        }
+                    }
+                    _ => println!("Invalid choice. Please enter 1-4.\n"),
+                }
+            }
+            Err(e) => {
+                println!("Error reading input: {}", e);
+                break;
+            }
+        }
+    }
 }
 
-fn demonstrate_function_pipelines() -> std::result::Result<(), Box<dyn std::error::Error>> {
+fn demonstrate_function_pipelines() -> Result<(), Box<dyn Error>> {
     println!("1. Function Pipelines for Data Transformation");
     println!("============================================");
 
@@ -93,7 +132,7 @@ fn demonstrate_function_pipelines() -> std::result::Result<(), Box<dyn std::erro
     Ok(())
 }
 
-fn demonstrate_type_classes() -> std::result::Result<(), Box<dyn std::error::Error>> {
+fn demonstrate_type_classes() -> Result<(), Box<dyn Error>> {
     println!("2. Generics as Type Classes");
     println!("===========================");
 
@@ -144,7 +183,7 @@ fn demonstrate_type_classes() -> std::result::Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-fn demonstrate_pattern_matching() -> std::result::Result<(), Box<dyn std::error::Error>> {
+fn demonstrate_pattern_matching() -> Result<(), Box<dyn Error>> {
     println!("3. Advanced Pattern Matching");
     println!("============================");
 
@@ -213,7 +252,7 @@ fn demonstrate_pattern_matching() -> std::result::Result<(), Box<dyn std::error:
     Ok(())
 }
 
-fn demonstrate_closure_patterns() -> std::result::Result<(), Box<dyn std::error::Error>> {
+fn demonstrate_closure_patterns() -> Result<(), Box<dyn Error>> {
     println!("4. Closure Patterns for Configurable Behavior");
     println!("==============================================");
 
