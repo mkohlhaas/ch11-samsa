@@ -198,8 +198,9 @@ fn demonstrate_type_classes() -> Result<(), Box<dyn Error>> {
 }
 
 fn demonstrate_pattern_matching() -> Result<(), Box<dyn Error>> {
+    println!("\n============================");
     println!("3. Advanced Pattern Matching");
-    println!("============================");
+    println!("============================\n");
 
     // Create various message types for pattern matching
     let messages = vec![
@@ -267,8 +268,9 @@ fn demonstrate_pattern_matching() -> Result<(), Box<dyn Error>> {
 }
 
 fn demonstrate_closure_patterns() -> Result<(), Box<dyn Error>> {
+    println!("\n==============================================");
     println!("4. Closure Patterns for Configurable Behavior");
-    println!("==============================================");
+    println!("==============================================\n");
 
     // Create message filters using closures
     let large_filter =
