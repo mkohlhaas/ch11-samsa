@@ -241,8 +241,8 @@ mod tests {
         assert_eq!(topic.as_str(), "test");
         assert_eq!(consumer_id.as_str(), "test");
         assert_ne!(
-            std::mem::discriminant(&topic),
-            std::mem::discriminant(&consumer_id)
+            std::any::type_name::<TopicId>(),
+            std::any::type_name::<ConsumerId>()
         );
     }
 

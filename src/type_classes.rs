@@ -203,10 +203,10 @@ impl SubscriptionManager {
 
     pub fn create_subscription(&mut self, user_id: u64, topic: String) -> error::Result<u64> {
         let id = random();
-        let pending = Subscription::new(id, user_id, topic);
-        let active = pending.activate()?;
+        let pending_subscription = Subscription::new(id, user_id, topic);
+        let active_subscription = pending_subscription.activate()?;
 
-        self.active_subscriptions.push(active);
+        self.active_subscriptions.push(active_subscription);
         Ok(id)
     }
 
@@ -255,7 +255,6 @@ impl SubscriptionManager {
 // ============================================== //
 
 /// This demonstrates the Monad pattern from functional programming.
-/// Note: This is a simplified implementation for illustrational purposes.
 ///
 /// The `Output<B>` associated type is a **Generic Associated Type (GAT)**:
 /// an associated type that itself takes a type parameter. Whereas a plain
@@ -264,17 +263,22 @@ impl SubscriptionManager {
 /// `Output<B>`". This lets a trait abstract over type constructors such as
 /// `Result<_, E>` or `Option<_>`, which in languages with full
 /// higher-kinded types (HKTs) would be written directly with a type
-/// constructor parameter. For example, in Haskell the `Monad` type class
-/// takes `m :: * -> *`, a type constructor like `Maybe` or `Either e`:
+/// constructor parameter.
 ///
 /// ```haskell
 /// class Monad m where
-///   return :: a -> m a
-///   (>>=)  :: m a -> (a -> m b) -> m b
+///   return :: a -> m a                     // pure
+///   (>>=)  :: m a -> (a -> m b) -> m b     // bind
 /// ```
 ///
 /// Rust has no HKTs, so `m` (the type constructor) cannot appear as a
 /// parameter; instead the GAT `type Output<B>` plays the role of `m b`.
+///
+/// Output<...> acts as a template/placeholder, could be Result, Option, etc...
+///
+/// Item                 = a
+/// Monad<A>             = m a
+/// Output<B> = Monad<B> = m b
 pub trait Monad {
     type Item;
     /// Higher-kinded proxy: wraps `B` in the same type constructor as `Self`
@@ -282,29 +286,56 @@ pub trait Monad {
     type Output<B>;
 
     /// Lifts a value into the monad.
+    /// Haskell/Purescript: a -> m a
     fn pure(item: Self::Item) -> Self;
 
     /// Sequences an effect: unwraps `Self`, applies `f` to the inner value,
     /// and returns the re-wrapped result. Because the return type is the GAT
     /// `Self::Output<B>` (not an arbitrary `B`), the result stays inside the
     /// monad, preserving short-circuiting of failure.
+    ///
+    /// Haskell/Purescript: m a -> (a -> m b) -> m b
     fn bind<F, B>(self, f: F) -> Self::Output<B>
     where
-        F: FnOnce(Self::Item) -> Self::Output<B>;
+        F: FnOnce(Self::Item) -> Self::Output<B>; // a -> m b
 }
 
 /// Result monad implementation
 ///
-/// `bind` composes with `and_then`, so `Err` values are propagated
-/// instead of panicking.
-impl<T, E> Monad for Result<T, E> {
-    type Item = T;
+/// `bind` composes with `and_then`, so `Err` values are propagated instead of panicking.
+///
+/// https://pursuit.purescript.org/packages/purescript-prelude/6.0.2/docs/Control.Monad#t:Monad
+impl<A, E> Monad for Result<A, E> {
+    type Item = A;
     type Output<B> = Result<B, E>;
 
+    // T -> Result<B, E>
     fn pure(item: Self::Item) -> Self {
         Ok(item)
     }
 
+    // Result<T, E> -> (T -> Result<B, E>) -> Result<B, E>
+    fn bind<F, B>(self, f: F) -> Self::Output<B>
+    where
+        F: FnOnce(Self::Item) -> Self::Output<B>,
+    {
+        self.and_then(f)
+    }
+}
+
+/// Option monad implementation
+///
+/// `bind` composes with `and_then`, so `None` short-circuits the chain.
+impl<A> Monad for Option<A> {
+    type Item = A;
+    type Output<B> = Option<B>;
+
+    // A -> Option<A>
+    fn pure(item: Self::Item) -> Self {
+        Some(item)
+    }
+
+    // Option<A> -> (A -> Option<B>) -> Option<B>
     fn bind<F, B>(self, f: F) -> Self::Output<B>
     where
         F: FnOnce(Self::Item) -> Self::Output<B>,
@@ -345,20 +376,45 @@ impl<T> Foldable for Vec<T> {
 }
 
 /// Type class for mappable functors
+///
+/// Item                   = a
+/// Functor<A>             = f a
+/// Output<B> = Functor<B> = f b
+///
+/// https://pursuit.purescript.org/packages/purescript-prelude/6.0.2/docs/Data.Functor
 pub trait Functor {
     type Item;
     type Output<B>;
 
+    // f a -> (a -> b) -> f b
     fn map<B, F>(self, f: F) -> Self::Output<B>
     where
-        F: FnOnce(Self::Item) -> B;
+        F: FnOnce(Self::Item) -> B; // a -> b
 }
 
 /// Option functor implementation
-impl<T> Functor for Option<T> {
-    type Item = T;
+///
+/// https://pursuit.purescript.org/packages/purescript-prelude/6.0.2/docs/Data.Functor#t:Functor
+impl<A> Functor for Option<A> {
+    type Item = A;
     type Output<B> = Option<B>;
 
+    // in Haskell/Purescript: Option T -> Option B
+    fn map<B, F>(self, f: F) -> Self::Output<B>
+    where
+        F: FnOnce(Self::Item) -> B, // basically: T -> B (in Haskell/Purescript)
+    {
+        self.map(f)
+    }
+}
+
+/// Result functor implementation
+impl<A, E> Functor for Result<A, E> {
+    type Item = A;
+    type Output<B> = Result<B, E>;
+
+    // in Haskell/Purescript: Either E A -> Either E B
+    // the error type E is preserved by the GAT
     fn map<B, F>(self, f: F) -> Self::Output<B>
     where
         F: FnOnce(Self::Item) -> B,
@@ -419,6 +475,15 @@ mod tests {
         let mapped = opt.map(|s| s.len());
         assert_eq!(mapped, Some(5));
 
+        // Functor for Result preserves the error side
+        let ok_result: Result<i32, &str> = Ok(5);
+        let mapped = ok_result.map(|x| x * 2);
+        assert_eq!(mapped, Ok(10));
+
+        let err_result: Result<i32, &str> = Err("boom");
+        let mapped = err_result.map(|x| x * 2);
+        assert_eq!(mapped, Err("boom"));
+
         // Filterable
         let items = vec![1, 2, 3, 4, 5];
         let evens = items.filter(|x| x % 2 == 0);
@@ -456,6 +521,19 @@ mod tests {
 
         let pure_val = <Result<i32, &str> as Monad>::pure(42);
         assert_eq!(pure_val.unwrap(), 42);
+
+        // Option monad
+        let some_val: Option<i32> = Some(5);
+        let result = some_val.bind(|x| Some(x * 2));
+        assert_eq!(result, Some(10));
+
+        // bind short-circuits on None
+        let none_val: Option<i32> = None;
+        let result = none_val.bind(|x| Some(x * 2));
+        assert_eq!(result, None);
+
+        let pure_val = <Option<i32> as Monad>::pure(42);
+        assert_eq!(pure_val, Some(42));
     }
 
     #[test]
@@ -488,7 +566,7 @@ mod tests {
 
         assert!(active.deliver_message("test").is_ok());
 
-        let suspended = active.suspend("reason".to_string());
+        let _suspended = active.suspend("reason".to_string());
         // Suspended subscriptions do not implement MessageDeliverableSubscription,
         // so delivery is prevented at compile time:
         // suspended.deliver_message("test"); // no longer compiles

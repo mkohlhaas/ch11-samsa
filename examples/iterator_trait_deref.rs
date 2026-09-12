@@ -269,12 +269,14 @@ mod tests {
     #[test]
     fn owned_intoiter_not_covered_but_cloned_makes_it_owned() {
         let views = sample_views();
-        // `views.into_iter()` yields owned PageView; requires the Owned trait
+        // `views.into_iter()` yields owned PageView, which does NOT satisfy the
+        // Deref-based blanket impl (PageView is not Deref<Target = PageView>).
+        // The Owned trait — the one the `.cloned()` pipeline uses — covers it:
         let result: HashMap<String, usize> = views
             .into_iter()
-            .recent_views(150u64)
-            .valid_views()
-            .count_by_page();
+            .recent_views_owned(150u64)
+            .valid_views_owned()
+            .count_by_page_owned();
         assert_eq!(result.get("home"), Some(&2));
     }
 
