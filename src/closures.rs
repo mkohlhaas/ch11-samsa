@@ -188,24 +188,30 @@ pub enum SystemEvent {
     ErrorOccurred { error_code: u32, details: String },
 }
 
-/// Event handler type for the event system
+/// Event handler type for a generic event type
 ///
-/// This could be parameterized on any type T (e.g. `EventHandler<T>`),
-/// but is fixed to `SystemEvent` for this crate's event bus.
-pub type EventHandler = Box<dyn Fn(&SystemEvent) + Send + Sync>;
+/// This type can be parameterized on any type T; in this code only
+/// `SystemEvent` is used.
+pub type EventHandler<T> = Box<dyn Fn(&T) + Send + Sync>;
 
 /// Simple event bus using closures
-pub struct EventBus {
-    handlers: Arc<Mutex<HashMap<String, Vec<EventHandler>>>>, // event_type -> vec of EventHandlers
+pub struct EventBus<T> {
+    handlers: Arc<Mutex<HashMap<String, Vec<EventHandler<T>>>>>, // event_type -> vec of EventHandlers
 }
 
-impl Default for EventBus {
+impl<T> Default for EventBus<T>
+where
+    T: Clone + Send + 'static,
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl EventBus {
+impl<T> EventBus<T>
+where
+    T: Clone + Send + 'static,
+{
     pub fn new() -> Self {
         Self {
             handlers: Arc::new(Mutex::new(HashMap::new())),
@@ -214,7 +220,7 @@ impl EventBus {
 
     pub fn subscribe<F>(&self, event_type: &str, handler: F)
     where
-        F: Fn(&SystemEvent) + Send + Sync + 'static,
+        F: Fn(&T) + Send + Sync + 'static,
     {
         let mut handlers = self.handlers.lock().unwrap();
         handlers
@@ -223,7 +229,7 @@ impl EventBus {
             .push(Box::new(handler));
     }
 
-    pub fn publish(&self, event_type: &str, event: &SystemEvent) {
+    pub fn publish(&self, event_type: &str, event: &T) {
         let handlers = self.handlers.lock().unwrap();
         if let Some(event_handlers) = handlers.get(event_type) {
             for handler in event_handlers {
@@ -234,8 +240,8 @@ impl EventBus {
 
     pub fn subscribe_with_filter<F, P>(&self, event_type: &str, predicate: P, handler: F)
     where
-        F: Fn(&SystemEvent) + Send + Sync + 'static,
-        P: Fn(&SystemEvent) -> bool + Send + Sync + 'static,
+        F: Fn(&T) + Send + Sync + 'static,
+        P: Fn(&T) -> bool + Send + Sync + 'static,
     {
         self.subscribe(event_type, move |event| {
             if predicate(event) {
