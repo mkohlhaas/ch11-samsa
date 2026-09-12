@@ -7,11 +7,11 @@ use crate::message::{Event, Message, current_timestamp};
 use std::collections::HashMap;
 use std::ops::Deref;
 
-/// Statistics about subscription events
-#[derive(Debug, Default)]
-pub struct SubscriptionStats {
-    pub total_valid: usize,
-    pub subscriptions_by_topic: HashMap<String, usize>, // topic -> size
+#[derive(Debug, Clone, PartialEq)]
+pub enum EventType {
+    Subscribe,
+    Unsubscribe,
+    Invalid,
 }
 
 /// A subscription event in the system
@@ -23,11 +23,11 @@ pub struct SubscriptionEvent {
     pub event_type: EventType,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum EventType {
-    Subscribe,
-    Unsubscribe,
-    Invalid,
+/// Statistics about subscription events
+#[derive(Debug, Default)]
+pub struct SubscriptionStats {
+    pub total_valid: usize, // size of valid SubscriptionEvents
+    pub subscriptions_by_topic: HashMap<String, usize>, // topic -> number of SubscriptionEvents
 }
 
 impl SubscriptionEvent {
@@ -37,29 +37,6 @@ impl SubscriptionEvent {
 
     pub fn is_subscription(&self) -> bool {
         self.event_type == EventType::Subscribe
-    }
-}
-
-/// Extension trait for subscription event processing
-pub trait SubscriptionProcessing: Iterator + Sized
-where
-    Self::Item: Deref<Target = SubscriptionEvent>,
-{
-    // Iterators //
-    fn recent_events(self, cutoff_timestamp: u64) -> impl Iterator<Item = Self::Item> {
-        self.filter(move |event| event.timestamp >= cutoff_timestamp)
-    }
-    fn valid_subscriptions(self) -> impl Iterator<Item = Self::Item> {
-        self.filter(|event| event.is_valid())
-            .filter(|event| event.is_subscription())
-    }
-
-    // HashMap result //
-    fn count_by_topic(self) -> HashMap<String, usize> {
-        self.fold(HashMap::new(), |mut acc, event| {
-            *acc.entry(event.topic.clone()).or_insert(0) += 1;
-            acc
-        })
     }
 }
 
@@ -86,6 +63,35 @@ pub fn process_subscription_events(events: &[SubscriptionEvent]) -> Subscription
     }
 }
 
+/// Extension trait for subscription event processing
+pub trait SubscriptionProcessing: Iterator + Sized
+where
+    Self::Item: Deref<Target = SubscriptionEvent>,
+{
+    // Iterators //
+    // Basically, just leave out .collect() and you get an iterator
+    fn recent_events(self, cutoff_timestamp: u64) -> impl Iterator<Item = Self::Item> {
+        self.filter(move |event| event.timestamp >= cutoff_timestamp)
+    }
+    fn valid_subscriptions(self) -> impl Iterator<Item = Self::Item> {
+        self.filter(|event| event.is_valid())
+            .filter(|event| event.is_subscription())
+    }
+
+    // Unlike the iterator combinators above, grouping by topic forces an eager
+    // fold into a HashMap: a topic's final count is only known once every
+    // element has been seen, so a lazy streaming version isn't possible. The
+    // HashMap's into_iter() still hands the caller a lazy iterator of
+    // (topic, count) pairs to collect, filter, or transform as needed.
+    fn count_by_topic(self) -> impl Iterator<Item = (String, usize)> {
+        self.fold(HashMap::new(), |mut acc, event| {
+            *acc.entry(event.topic.clone()).or_insert(0) += 1;
+            acc
+        })
+        .into_iter()
+    }
+}
+
 // blanket implementation
 // applies to e.g., events.iter() (slice::Iter<'_, SubscriptionEvent>, Item = &SubscriptionEvent)
 // -> it is a Sized iterator whose items deref to SubscriptionEvent, so it satisfies the blanket impl
@@ -107,6 +113,7 @@ pub fn analyze_recent_subscriptions(
         .recent_events(cutoff_timestamp)
         .valid_subscriptions()
         .count_by_topic()
+        .collect()
 }
 
 /// Message processing pipeline for filtering and transformation
