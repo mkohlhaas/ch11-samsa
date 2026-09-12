@@ -9,6 +9,10 @@ use crate::message::current_timestamp;
 use rand::random;
 use std::marker::PhantomData;
 
+// ============= //
+// Subscriptions //
+// ============= //
+
 /// State type markers
 pub mod state {
     #[derive(Debug)]
@@ -134,6 +138,7 @@ impl CancellableSubscription for Subscription<state::Suspended> {
 }
 
 impl MessageDeliverableSubscription for Subscription<state::Active> {
+    // we pretend every message can be delivered without any errors
     fn deliver_message(&self, message: &str) -> Result<(), SamsaError> {
         println!(
             "Delivering message '{}' to subscription {}",
@@ -142,6 +147,10 @@ impl MessageDeliverableSubscription for Subscription<state::Active> {
         Ok(())
     }
 }
+
+// ------------------------ //
+// Generic Helper Functions //
+// ------------------------ //
 
 /// Generic function that works with any cancellable subscription
 pub fn cancel_subscription_with_audit<S>(
@@ -175,33 +184,24 @@ where
     }
 }
 
+// ==================== //
+// Subscription Manager //
+// ==================== //
+
 /// Subscription manager using type classes
+#[derive(Default)]
 pub struct SubscriptionManager {
     active_subscriptions: Vec<Subscription<state::Active>>,
     suspended_subscriptions: Vec<Subscription<state::Suspended>>,
     cancelled_subscriptions: Vec<Subscription<state::Cancelled>>,
 }
 
-impl Default for SubscriptionManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl SubscriptionManager {
     pub fn new() -> Self {
-        Self {
-            active_subscriptions: Vec::new(),
-            suspended_subscriptions: Vec::new(),
-            cancelled_subscriptions: Vec::new(),
-        }
+        Self::default()
     }
 
-    pub fn create_subscription(
-        &mut self,
-        user_id: u64,
-        topic: String,
-    ) -> error::Result<u64> {
+    pub fn create_subscription(&mut self, user_id: u64, topic: String) -> error::Result<u64> {
         let id = random();
         let pending = Subscription::new(id, user_id, topic);
         let active = pending.activate()?;
@@ -212,9 +212,9 @@ impl SubscriptionManager {
 
     pub fn suspend_subscription(&mut self, id: u64, reason: String) -> error::Result<()> {
         if let Some(pos) = self.active_subscriptions.iter().position(|s| s.id == id) {
-            let subscription = self.active_subscriptions.remove(pos);
-            let suspended = subscription.suspend(reason);
-            self.suspended_subscriptions.push(suspended);
+            let active_subscription = self.active_subscriptions.remove(pos);
+            let suspended_subscription = active_subscription.suspend(reason);
+            self.suspended_subscriptions.push(suspended_subscription);
             Ok(())
         } else {
             Err(SamsaError::consumer("Subscription not found or not active"))
@@ -224,17 +224,17 @@ impl SubscriptionManager {
     pub fn cancel_subscription(&mut self, id: u64, reason: String) -> error::Result<()> {
         // Try to cancel from active subscriptions
         if let Some(pos) = self.active_subscriptions.iter().position(|s| s.id == id) {
-            let subscription = self.active_subscriptions.remove(pos);
-            let cancelled = subscription.cancel(reason);
-            self.cancelled_subscriptions.push(cancelled);
+            let active_subscription = self.active_subscriptions.remove(pos);
+            let cancelled_subscription = active_subscription.cancel(reason);
+            self.cancelled_subscriptions.push(cancelled_subscription);
             return Ok(());
         }
 
         // Try to cancel from suspended subscriptions
         if let Some(pos) = self.suspended_subscriptions.iter().position(|s| s.id == id) {
-            let subscription = self.suspended_subscriptions.remove(pos);
-            let cancelled = subscription.cancel(reason);
-            self.cancelled_subscriptions.push(cancelled);
+            let suspended_subscription = self.suspended_subscriptions.remove(pos);
+            let cancelled_subscription = suspended_subscription.cancel(reason);
+            self.cancelled_subscriptions.push(cancelled_subscription);
             return Ok(());
         }
 
@@ -250,51 +250,66 @@ impl SubscriptionManager {
     }
 }
 
-/// Demonstrate type class constraints in generic functions
-/// Note: This is a simplified example for demonstration
-pub fn process_option_string(value: Option<String>) -> Option<usize> {
-    println!("Processing value: {:?}", value);
-    value.map(|s| {
-        println!("Mapping string: {}", s);
-        s.len()
-    })
-}
+// ============================================== //
+// Higher-order type class for monadic operations //
+// ============================================== //
 
-/// Higher-order type class for monadic operations
-///
 /// This demonstrates the Monad pattern from functional programming.
 /// Note: This is a simplified implementation for illustrational purposes.
+///
+/// The `Output<B>` associated type is a **Generic Associated Type (GAT)**:
+/// an associated type that itself takes a type parameter. Whereas a plain
+/// associated type (like `Item`) fixes one concrete type per impl, a GAT
+/// behaves like a type-level function — "give me a `B` and I get an
+/// `Output<B>`". This lets a trait abstract over type constructors such as
+/// `Result<_, E>` or `Option<_>`, which in languages with full
+/// higher-kinded types (HKTs) would be written directly with a type
+/// constructor parameter. For example, in Haskell the `Monad` type class
+/// takes `m :: * -> *`, a type constructor like `Maybe` or `Either e`:
+///
+/// ```haskell
+/// class Monad m where
+///   return :: a -> m a
+///   (>>=)  :: m a -> (a -> m b) -> m b
+/// ```
+///
+/// Rust has no HKTs, so `m` (the type constructor) cannot appear as a
+/// parameter; instead the GAT `type Output<B>` plays the role of `m b`.
 pub trait Monad {
     type Item;
+    /// Higher-kinded proxy: wraps `B` in the same type constructor as `Self`
+    /// (e.g. `Result<B, E>` for `Result<T, E>`).
+    type Output<B>;
 
+    /// Lifts a value into the monad.
     fn pure(item: Self::Item) -> Self;
-    fn bind<F, B>(self, f: F) -> B
+
+    /// Sequences an effect: unwraps `Self`, applies `f` to the inner value,
+    /// and returns the re-wrapped result. Because the return type is the GAT
+    /// `Self::Output<B>` (not an arbitrary `B`), the result stays inside the
+    /// monad, preserving short-circuiting of failure.
+    fn bind<F, B>(self, f: F) -> Self::Output<B>
     where
-        F: FnOnce(Self::Item) -> B;
+        F: FnOnce(Self::Item) -> Self::Output<B>;
 }
 
 /// Result monad implementation
 ///
-/// # Panics
-///
-/// **Warning:** This implementation panics when `bind()` is called on an `Err` value.
-/// This is a simplified demonstration of the monad pattern. In production code,
-/// use Rust's built-in `?` operator, `and_then()`, or `map()` instead.
+/// `bind` composes with `and_then`, so `Err` values are propagated
+/// instead of panicking.
 impl<T, E> Monad for Result<T, E> {
     type Item = T;
+    type Output<B> = Result<B, E>;
 
     fn pure(item: Self::Item) -> Self {
         Ok(item)
     }
 
-    fn bind<F, B>(self, f: F) -> B
+    fn bind<F, B>(self, f: F) -> Self::Output<B>
     where
-        F: FnOnce(Self::Item) -> B,
+        F: FnOnce(Self::Item) -> Self::Output<B>,
     {
-        match self {
-            Ok(val) => f(val),
-            Err(_) => panic!("Cannot bind on Err"), // Simplified for demo
-        }
+        self.and_then(f)
     }
 }
 
@@ -431,8 +446,13 @@ mod tests {
     #[test]
     fn test_monad_operations() {
         let ok_val: Result<i32, &str> = Ok(5);
-        let result = ok_val.bind(|x| x * 2);
-        assert_eq!(result, 10);
+        let result = ok_val.bind(|x| Ok(x * 2));
+        assert_eq!(result, Ok(10));
+
+        // bind short-circuits on Err instead of panicking
+        let err_val: Result<i32, &str> = Err("boom");
+        let result = err_val.bind(|x| Ok(x * 2));
+        assert_eq!(result, Err("boom"));
 
         let pure_val = <Result<i32, &str> as Monad>::pure(42);
         assert_eq!(pure_val.unwrap(), 42);
@@ -459,15 +479,6 @@ mod tests {
                 .is_ok()
         );
         assert!(manager.cancel_subscription(id, "Done".to_string()).is_ok());
-    }
-
-    #[test]
-    fn test_process_option_string() {
-        let some_val = Some("hello".to_string());
-        assert_eq!(process_option_string(some_val), Some(5));
-
-        let none_val: Option<String> = None;
-        assert_eq!(process_option_string(none_val), None);
     }
 
     #[test]
