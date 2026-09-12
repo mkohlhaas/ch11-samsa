@@ -27,7 +27,7 @@ fn main() {
         println!("  2. Generics as Type Classes");
         println!("  3. Advanced Pattern Matching");
         println!("  4. Closure Patterns");
-        println!("  Ctrl+D to exit\n");
+        println!("  5. Exit");
         print!("> ");
 
         let mut input = String::new();
@@ -59,7 +59,11 @@ fn main() {
                             println!("Error: {}\n", e);
                         }
                     }
-                    _ => println!("Invalid choice. Please enter 1-4.\n"),
+                    "5" => {
+                        println!("\nGoodbye!");
+                        break;
+                    }
+                    _ => println!("Invalid choice. Please enter 1-5.\n"),
                 }
             }
             Err(e) => {
