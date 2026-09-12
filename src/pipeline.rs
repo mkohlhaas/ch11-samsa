@@ -93,7 +93,7 @@ pub fn process_subscription_events(events: &[SubscriptionEvent]) -> Subscription
 impl<I> SubscriptionProcessing for I
 where
     I: Iterator + Sized,
-    I::Item: Deref<Target = SubscriptionEvent>, // NOTE: autoderef happens only on the fly, e.g. to call .is_valid(), and the owned value is immediately discarded.
+    I::Item: Deref<Target = SubscriptionEvent>,
 {
 }
 
