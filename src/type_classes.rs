@@ -7,14 +7,27 @@
 use crate::error::{self, SamsaError};
 use crate::message::current_timestamp;
 use rand::random;
-use std::error::Error;
-use std::fmt::Display;
 use std::marker::PhantomData;
+
+/// State type markers
+pub mod state {
+    #[derive(Debug)]
+    pub struct Pending;
+
+    #[derive(Debug)]
+    pub struct Active;
+
+    #[derive(Debug)]
+    pub struct Suspended;
+
+    #[derive(Debug)]
+    pub struct Cancelled;
+}
 
 /// Type class for subscriptions that can be activated
 pub trait ActivatableSubscription {
     type Output;
-    fn activate(self) -> Result<Self::Output, ActivationError>;
+    fn activate(self) -> Result<Self::Output, SamsaError>;
 }
 
 /// Type class for subscriptions that can be suspended  
@@ -31,47 +44,7 @@ pub trait CancellableSubscription {
 
 /// Type class for subscriptions that can deliver messages (or not)
 pub trait MessageDeliverableSubscription {
-    fn deliver_message(&self, message: &str) -> Result<(), DeliveryError>;
-}
-
-#[derive(Debug, Clone)]
-pub enum ActivationError {
-    InvalidUser,
-    TopicNotFound,
-    QuotaExceeded,
-}
-
-impl Display for ActivationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ActivationError::InvalidUser => write!(f, "Invalid user"),
-            ActivationError::TopicNotFound => write!(f, "Topic not found"),
-            ActivationError::QuotaExceeded => write!(f, "Quota exceeded"),
-        }
-    }
-}
-
-impl Error for ActivationError {}
-
-#[derive(Debug, Clone)]
-pub enum DeliveryError {
-    NetworkError,
-    UserNotFound,
-}
-
-/// State type markers
-pub mod state {
-    #[derive(Debug)]
-    pub struct Pending;
-
-    #[derive(Debug)]
-    pub struct Active;
-
-    #[derive(Debug)]
-    pub struct Suspended;
-
-    #[derive(Debug)]
-    pub struct Cancelled;
+    fn deliver_message(&self, message: &str) -> Result<(), SamsaError>;
 }
 
 /// Generic subscription with phantom state
@@ -99,13 +72,13 @@ impl Subscription<state::Pending> {
 impl ActivatableSubscription for Subscription<state::Pending> {
     type Output = Subscription<state::Active>;
 
-    fn activate(self) -> Result<Self::Output, ActivationError> {
+    fn activate(self) -> Result<Self::Output, SamsaError> {
         if self.user_id == 0 {
-            return Err(ActivationError::InvalidUser);
+            return Err(SamsaError::activation("Invalid user"));
         }
 
         if self.topic.is_empty() {
-            return Err(ActivationError::TopicNotFound);
+            return Err(SamsaError::activation("Topic not found"));
         }
 
         Ok(Subscription {
@@ -161,7 +134,7 @@ impl CancellableSubscription for Subscription<state::Suspended> {
 }
 
 impl MessageDeliverableSubscription for Subscription<state::Active> {
-    fn deliver_message(&self, message: &str) -> Result<(), DeliveryError> {
+    fn deliver_message(&self, message: &str) -> Result<(), SamsaError> {
         println!(
             "Delivering message '{}' to subscription {}",
             message, self.id
@@ -228,7 +201,7 @@ impl SubscriptionManager {
         &mut self,
         user_id: u64,
         topic: String,
-    ) -> Result<u64, ActivationError> {
+    ) -> error::Result<u64> {
         let id = random();
         let pending = Subscription::new(id, user_id, topic);
         let active = pending.activate()?;
@@ -442,13 +415,13 @@ mod tests {
         let invalid_user = Subscription::new(1, 0, "topic".to_string());
         assert!(matches!(
             invalid_user.activate(),
-            Err(ActivationError::InvalidUser)
+            Err(SamsaError::Activation(ref msg)) if msg == "Invalid user"
         ));
 
         let empty_topic = Subscription::new(1, 100, "".to_string());
         assert!(matches!(
             empty_topic.activate(),
-            Err(ActivationError::TopicNotFound)
+            Err(SamsaError::Activation(ref msg)) if msg == "Topic not found"
         ));
 
         let valid = Subscription::new(1, 100, "topic".to_string());

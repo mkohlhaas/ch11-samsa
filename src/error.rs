@@ -51,6 +51,14 @@ pub enum SamsaError {
     /// Connection-related errors
     #[error("Connection failed: {0}")]
     Connection(String),
+
+    /// Subscription activation errors
+    #[error("Subscription activation failed: {0}")]
+    Activation(String),
+
+    /// Message delivery errors
+    #[error("Message delivery failed: {0}")]
+    Delivery(String),
 }
 
 /// Convenience type alias for Results using SamsaError
@@ -88,5 +96,13 @@ impl SamsaError {
 
     pub fn connection(msg: impl Into<String>) -> Self {
         SamsaError::Connection(msg.into())
+    }
+
+    pub fn activation(msg: impl Into<String>) -> Self {
+        SamsaError::Activation(msg.into())
+    }
+
+    pub fn delivery(msg: impl Into<String>) -> Self {
+        SamsaError::Delivery(msg.into())
     }
 }
