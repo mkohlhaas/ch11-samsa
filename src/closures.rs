@@ -10,6 +10,10 @@ use std::hash::Hash;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+// ============== //
+// Message Filter //
+// ============== //
+
 /// Configurable message filter using closures
 pub struct MessageFilter<F> {
     predicate: F,
@@ -80,7 +84,13 @@ pub fn create_message_filters() -> (
     (large_filter, system_filter, recent_filter)
 }
 
+// ============== //
+// Message Router //
+// ============== //
+
 /// Strategy pattern using closures for routing
+///
+/// Function returns a vector of queue names
 pub type RoutingStrategy = Box<dyn Fn(&Message) -> Vec<String> + Send + Sync>;
 
 pub struct MessageRouter {
@@ -94,6 +104,7 @@ impl Default for MessageRouter {
     }
 }
 
+/// First-match-wins router with a default fallback
 impl MessageRouter {
     pub fn new() -> Self {
         Self {
@@ -164,27 +175,37 @@ pub fn create_routing_strategies() -> MessageRouter {
     router
 }
 
-/// Event handler type for the event system
-pub type EventHandler<T> = Box<dyn Fn(&T) + Send + Sync>;
+// ========= //
+// Event Bus //
+// ========= //
 
-/// Simple event bus using closures
-pub struct EventBus<T> {
-    handlers: Arc<Mutex<HashMap<String, Vec<EventHandler<T>>>>>,
+/// System events for the event bus
+#[derive(Debug, Clone)]
+pub enum SystemEvent {
+    MessageReceived { message_id: u64, topic: String },
+    UserConnected { user_id: u64 },
+    UserDisconnected { user_id: u64 },
+    ErrorOccurred { error_code: u32, details: String },
 }
 
-impl<T> Default for EventBus<T>
-where
-    T: Clone + Send + 'static,
-{
+/// Event handler type for the event system
+///
+/// This could be parameterized on any type T (e.g. `EventHandler<T>`),
+/// but is fixed to `SystemEvent` for this crate's event bus.
+pub type EventHandler = Box<dyn Fn(&SystemEvent) + Send + Sync>;
+
+/// Simple event bus using closures
+pub struct EventBus {
+    handlers: Arc<Mutex<HashMap<String, Vec<EventHandler>>>>, // event_type -> vec of EventHandlers
+}
+
+impl Default for EventBus {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T> EventBus<T>
-where
-    T: Clone + Send + 'static,
-{
+impl EventBus {
     pub fn new() -> Self {
         Self {
             handlers: Arc::new(Mutex::new(HashMap::new())),
@@ -193,7 +214,7 @@ where
 
     pub fn subscribe<F>(&self, event_type: &str, handler: F)
     where
-        F: Fn(&T) + Send + Sync + 'static,
+        F: Fn(&SystemEvent) + Send + Sync + 'static,
     {
         let mut handlers = self.handlers.lock().unwrap();
         handlers
@@ -202,7 +223,7 @@ where
             .push(Box::new(handler));
     }
 
-    pub fn publish(&self, event_type: &str, event: &T) {
+    pub fn publish(&self, event_type: &str, event: &SystemEvent) {
         let handlers = self.handlers.lock().unwrap();
         if let Some(event_handlers) = handlers.get(event_type) {
             for handler in event_handlers {
@@ -213,8 +234,8 @@ where
 
     pub fn subscribe_with_filter<F, P>(&self, event_type: &str, predicate: P, handler: F)
     where
-        F: Fn(&T) + Send + Sync + 'static,
-        P: Fn(&T) -> bool + Send + Sync + 'static,
+        F: Fn(&SystemEvent) + Send + Sync + 'static,
+        P: Fn(&SystemEvent) -> bool + Send + Sync + 'static,
     {
         self.subscribe(event_type, move |event| {
             if predicate(event) {
@@ -222,15 +243,6 @@ where
             }
         });
     }
-}
-
-/// System events for the event bus
-#[derive(Debug, Clone)]
-pub enum SystemEvent {
-    MessageReceived { message_id: u64, topic: String },
-    UserConnected { user_id: u64 },
-    UserDisconnected { user_id: u64 },
-    ErrorOccurred { error_code: u32, details: String },
 }
 
 /// Processing pipeline using closures
@@ -518,8 +530,10 @@ mod tests {
 
     #[test]
     fn test_message_filter_or() {
-        let filter_a = MessageFilter::new("A".to_string(), |msg: &Message| msg.topic.starts_with("a"));
-        let filter_b = MessageFilter::new("B".to_string(), |msg: &Message| msg.topic.starts_with("b"));
+        let filter_a =
+            MessageFilter::new("A".to_string(), |msg: &Message| msg.topic.starts_with("a"));
+        let filter_b =
+            MessageFilter::new("B".to_string(), |msg: &Message| msg.topic.starts_with("b"));
 
         let combined = filter_a.or(filter_b);
 

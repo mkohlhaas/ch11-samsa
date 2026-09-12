@@ -5,7 +5,7 @@
 #[derive(Debug, Clone)]
 pub struct Message {
     pub topic: String,
-    pub key: Option<String>,
+    pub key: Option<String>, // used for partitioning (messages with the same key go to the same partition)
     pub value: Vec<u8>,
     pub timestamp: u64,
 }
