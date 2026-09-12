@@ -7,29 +7,30 @@
 use crate::error::{self, SamsaError};
 use crate::message::current_timestamp;
 use rand::random;
+use std::error::Error;
+use std::fmt::Display;
 use std::marker::PhantomData;
 
 /// Type class for subscriptions that can be activated
-pub trait Activatable {
+pub trait ActivatableSubscription {
     type Output;
     fn activate(self) -> Result<Self::Output, ActivationError>;
 }
 
 /// Type class for subscriptions that can be suspended  
-pub trait Suspendable {
+pub trait SuspendableSubscription {
     type Output;
     fn suspend(self, reason: String) -> Self::Output;
 }
 
 /// Type class for subscriptions that can be canceled
-pub trait Cancellable {
+pub trait CancellableSubscription {
     type Output;
     fn cancel(self, reason: String) -> Self::Output;
 }
 
 /// Type class for subscriptions that can deliver messages
-pub trait MessageDeliverable {
-    fn can_deliver_messages(&self) -> bool;
+pub trait MessageDeliverableSubscription {
     fn deliver_message(&self, message: &str) -> Result<(), DeliveryError>;
 }
 
@@ -40,7 +41,7 @@ pub enum ActivationError {
     QuotaExceeded,
 }
 
-impl std::fmt::Display for ActivationError {
+impl Display for ActivationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ActivationError::InvalidUser => write!(f, "Invalid user"),
@@ -50,7 +51,7 @@ impl std::fmt::Display for ActivationError {
     }
 }
 
-impl std::error::Error for ActivationError {}
+impl Error for ActivationError {}
 
 #[derive(Debug, Clone)]
 pub enum DeliveryError {
@@ -81,7 +82,7 @@ pub struct Subscription<S> {
     pub user_id: u64,
     pub topic: String,
     pub created_at: u64,
-    _state: PhantomData<S>,
+    state: PhantomData<S>,
 }
 
 impl Subscription<state::Pending> {
@@ -91,12 +92,12 @@ impl Subscription<state::Pending> {
             user_id,
             topic,
             created_at: current_timestamp(),
-            _state: PhantomData,
+            state: PhantomData,
         }
     }
 }
 
-impl Activatable for Subscription<state::Pending> {
+impl ActivatableSubscription for Subscription<state::Pending> {
     type Output = Subscription<state::Active>;
 
     fn activate(self) -> Result<Self::Output, ActivationError> {
@@ -113,12 +114,12 @@ impl Activatable for Subscription<state::Pending> {
             user_id: self.user_id,
             topic: self.topic,
             created_at: self.created_at,
-            _state: PhantomData,
+            state: PhantomData,
         })
     }
 }
 
-impl Suspendable for Subscription<state::Active> {
+impl SuspendableSubscription for Subscription<state::Active> {
     type Output = Subscription<state::Suspended>;
 
     fn suspend(self, _reason: String) -> Self::Output {
@@ -127,12 +128,12 @@ impl Suspendable for Subscription<state::Active> {
             user_id: self.user_id,
             topic: self.topic,
             created_at: self.created_at,
-            _state: PhantomData,
+            state: PhantomData,
         }
     }
 }
 
-impl Cancellable for Subscription<state::Active> {
+impl CancellableSubscription for Subscription<state::Active> {
     type Output = Subscription<state::Cancelled>;
 
     fn cancel(self, _reason: String) -> Self::Output {
@@ -141,12 +142,12 @@ impl Cancellable for Subscription<state::Active> {
             user_id: self.user_id,
             topic: self.topic,
             created_at: self.created_at,
-            _state: PhantomData,
+            state: PhantomData,
         }
     }
 }
 
-impl Cancellable for Subscription<state::Suspended> {
+impl CancellableSubscription for Subscription<state::Suspended> {
     type Output = Subscription<state::Cancelled>;
 
     fn cancel(self, _reason: String) -> Self::Output {
@@ -155,16 +156,12 @@ impl Cancellable for Subscription<state::Suspended> {
             user_id: self.user_id,
             topic: self.topic,
             created_at: self.created_at,
-            _state: PhantomData,
+            state: PhantomData,
         }
     }
 }
 
-impl MessageDeliverable for Subscription<state::Active> {
-    fn can_deliver_messages(&self) -> bool {
-        true
-    }
-
+impl MessageDeliverableSubscription for Subscription<state::Active> {
     fn deliver_message(&self, message: &str) -> Result<(), DeliveryError> {
         println!(
             "Delivering message '{}' to subscription {}",
@@ -174,11 +171,7 @@ impl MessageDeliverable for Subscription<state::Active> {
     }
 }
 
-impl MessageDeliverable for Subscription<state::Suspended> {
-    fn can_deliver_messages(&self) -> bool {
-        false
-    }
-
+impl MessageDeliverableSubscription for Subscription<state::Suspended> {
     fn deliver_message(&self, _message: &str) -> Result<(), DeliveryError> {
         Err(DeliveryError::TopicUnavailable)
     }
@@ -190,7 +183,7 @@ pub fn cancel_subscription_with_audit<S>(
     reason: String,
 ) -> Subscription<state::Cancelled>
 where
-    Subscription<S>: Cancellable<Output = Subscription<state::Cancelled>>,
+    Subscription<S>: CancellableSubscription<Output = Subscription<state::Cancelled>>,
 {
     println!(
         "Auditing cancellation of subscription {}: {}",
@@ -202,7 +195,7 @@ where
 /// Generic function for message delivery with fallback
 pub fn try_deliver_message<S>(subscription: &Subscription<S>, message: &str) -> bool
 where
-    Subscription<S>: MessageDeliverable,
+    Subscription<S>: MessageDeliverableSubscription,
 {
     match subscription.deliver_message(message) {
         Ok(()) => {
@@ -214,6 +207,91 @@ where
             false
         }
     }
+}
+
+/// Subscription manager using type classes
+pub struct SubscriptionManager {
+    active_subscriptions: Vec<Subscription<state::Active>>,
+    suspended_subscriptions: Vec<Subscription<state::Suspended>>,
+    cancelled_subscriptions: Vec<Subscription<state::Cancelled>>,
+}
+
+impl Default for SubscriptionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SubscriptionManager {
+    pub fn new() -> Self {
+        Self {
+            active_subscriptions: Vec::new(),
+            suspended_subscriptions: Vec::new(),
+            cancelled_subscriptions: Vec::new(),
+        }
+    }
+
+    pub fn create_subscription(
+        &mut self,
+        user_id: u64,
+        topic: String,
+    ) -> Result<u64, ActivationError> {
+        let id = random();
+        let pending = Subscription::new(id, user_id, topic);
+        let active = pending.activate()?;
+
+        self.active_subscriptions.push(active);
+        Ok(id)
+    }
+
+    pub fn suspend_subscription(&mut self, id: u64, reason: String) -> error::Result<()> {
+        if let Some(pos) = self.active_subscriptions.iter().position(|s| s.id == id) {
+            let subscription = self.active_subscriptions.remove(pos);
+            let suspended = subscription.suspend(reason);
+            self.suspended_subscriptions.push(suspended);
+            Ok(())
+        } else {
+            Err(SamsaError::consumer("Subscription not found or not active"))
+        }
+    }
+
+    pub fn cancel_subscription(&mut self, id: u64, reason: String) -> error::Result<()> {
+        // Try to cancel from active subscriptions
+        if let Some(pos) = self.active_subscriptions.iter().position(|s| s.id == id) {
+            let subscription = self.active_subscriptions.remove(pos);
+            let cancelled = subscription.cancel(reason);
+            self.cancelled_subscriptions.push(cancelled);
+            return Ok(());
+        }
+
+        // Try to cancel from suspended subscriptions
+        if let Some(pos) = self.suspended_subscriptions.iter().position(|s| s.id == id) {
+            let subscription = self.suspended_subscriptions.remove(pos);
+            let cancelled = subscription.cancel(reason);
+            self.cancelled_subscriptions.push(cancelled);
+            return Ok(());
+        }
+
+        Err(SamsaError::consumer("Subscription not found"))
+    }
+
+    pub fn broadcast_message(&self, topic: &str, message: &str) {
+        for subscription in &self.active_subscriptions {
+            if subscription.topic == topic {
+                try_deliver_message(subscription, message);
+            }
+        }
+    }
+}
+
+/// Demonstrate type class constraints in generic functions
+/// Note: This is a simplified example for demonstration
+pub fn process_option_string(value: Option<String>) -> Option<usize> {
+    println!("Processing value: {:?}", value);
+    value.map(|s| {
+        println!("Mapping string: {}", s);
+        s.len()
+    })
 }
 
 /// Higher-order type class for monadic operations
@@ -328,91 +406,6 @@ impl<T> Filterable for Vec<T> {
     }
 }
 
-/// Subscription manager using type classes
-pub struct SubscriptionManager {
-    active_subscriptions: Vec<Subscription<state::Active>>,
-    suspended_subscriptions: Vec<Subscription<state::Suspended>>,
-    cancelled_subscriptions: Vec<Subscription<state::Cancelled>>,
-}
-
-impl Default for SubscriptionManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SubscriptionManager {
-    pub fn new() -> Self {
-        Self {
-            active_subscriptions: Vec::new(),
-            suspended_subscriptions: Vec::new(),
-            cancelled_subscriptions: Vec::new(),
-        }
-    }
-
-    pub fn create_subscription(
-        &mut self,
-        user_id: u64,
-        topic: String,
-    ) -> Result<u64, ActivationError> {
-        let id = random();
-        let pending = Subscription::new(id, user_id, topic);
-        let active = pending.activate()?;
-
-        self.active_subscriptions.push(active);
-        Ok(id)
-    }
-
-    pub fn suspend_subscription(&mut self, id: u64, reason: String) -> error::Result<()> {
-        if let Some(pos) = self.active_subscriptions.iter().position(|s| s.id == id) {
-            let subscription = self.active_subscriptions.remove(pos);
-            let suspended = subscription.suspend(reason);
-            self.suspended_subscriptions.push(suspended);
-            Ok(())
-        } else {
-            Err(SamsaError::consumer("Subscription not found or not active"))
-        }
-    }
-
-    pub fn cancel_subscription(&mut self, id: u64, reason: String) -> error::Result<()> {
-        // Try to cancel from active subscriptions
-        if let Some(pos) = self.active_subscriptions.iter().position(|s| s.id == id) {
-            let subscription = self.active_subscriptions.remove(pos);
-            let cancelled = subscription.cancel(reason);
-            self.cancelled_subscriptions.push(cancelled);
-            return Ok(());
-        }
-
-        // Try to cancel from suspended subscriptions
-        if let Some(pos) = self.suspended_subscriptions.iter().position(|s| s.id == id) {
-            let subscription = self.suspended_subscriptions.remove(pos);
-            let cancelled = subscription.cancel(reason);
-            self.cancelled_subscriptions.push(cancelled);
-            return Ok(());
-        }
-
-        Err(SamsaError::consumer("Subscription not found"))
-    }
-
-    pub fn broadcast_message(&self, topic: &str, message: &str) {
-        for subscription in &self.active_subscriptions {
-            if subscription.topic == topic {
-                try_deliver_message(subscription, message);
-            }
-        }
-    }
-}
-
-/// Demonstrate type class constraints in generic functions
-/// Note: This is a simplified example for demonstration
-pub fn process_option_string(value: Option<String>) -> Option<usize> {
-    println!("Processing value: {:?}", value);
-    value.map(|s| {
-        println!("Mapping string: {}", s);
-        s.len()
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -497,7 +490,11 @@ mod tests {
         assert!(id.is_ok());
         let id = id.unwrap();
 
-        assert!(manager.suspend_subscription(id, "Maintenance".to_string()).is_ok());
+        assert!(
+            manager
+                .suspend_subscription(id, "Maintenance".to_string())
+                .is_ok()
+        );
         assert!(manager.cancel_subscription(id, "Done".to_string()).is_ok());
     }
 
@@ -515,11 +512,9 @@ mod tests {
         let pending = Subscription::new(1, 100, "topic".to_string());
         let active = pending.activate().unwrap();
 
-        assert!(active.can_deliver_messages());
         assert!(active.deliver_message("test").is_ok());
 
         let suspended = active.suspend("reason".to_string());
-        assert!(!suspended.can_deliver_messages());
         assert!(suspended.deliver_message("test").is_err());
     }
 }

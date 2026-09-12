@@ -128,7 +128,7 @@ fn demonstrate_function_pipelines() -> Result<(), Box<dyn Error>> {
     println!("---------------------------------------------");
 
     {
-        // Demonstrate message processing pipeline
+        // Demonstrate message processing pipeline with closures
         let messages = vec![
             Message::new("USER.LOGIN", None, b"User 123 logged in"),
             Message::new("system.alert", None, b"Critical error occurred"),

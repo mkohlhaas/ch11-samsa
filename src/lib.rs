@@ -33,7 +33,8 @@ pub use pipeline::{
     SubscriptionProcessing, SubscriptionStats,
 };
 pub use type_classes::{
-    Activatable, Cancellable, MessageDeliverable, Subscription, SubscriptionManager, Suspendable,
+    ActivatableSubscription, CancellableSubscription, MessageDeliverableSubscription, Subscription,
+    SubscriptionManager, SuspendableSubscription,
 };
 
 mod broker;
