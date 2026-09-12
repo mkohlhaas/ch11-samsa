@@ -187,15 +187,14 @@ fn demonstrate_type_classes() -> Result<(), Box<dyn Error>> {
 
     // Demonstrate different subscription states
     let suspended = active.suspend("Testing".to_string());
-    let delivered = try_deliver_message(&suspended, "This should fail");
     println!(
-        "✓ Suspended delivery: {}",
-        if delivered {
-            "success"
-        } else {
-            "failed (expected)"
-        }
+        "✓ Suspended subscription {} cannot receive messages (compile-time)",
+        suspended.id
     );
+
+    // Suspended subscriptions can still be cancelled
+    let cancelled = cancel_subscription_with_audit(suspended, "User request".to_string());
+    println!("✓ Cancelled subscription {}", cancelled.id);
 
     println!();
     Ok(())

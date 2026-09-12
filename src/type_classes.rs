@@ -29,7 +29,7 @@ pub trait CancellableSubscription {
     fn cancel(self, reason: String) -> Self::Output;
 }
 
-/// Type class for subscriptions that can deliver messages
+/// Type class for subscriptions that can deliver messages (or not)
 pub trait MessageDeliverableSubscription {
     fn deliver_message(&self, message: &str) -> Result<(), DeliveryError>;
 }
@@ -57,7 +57,6 @@ impl Error for ActivationError {}
 pub enum DeliveryError {
     NetworkError,
     UserNotFound,
-    TopicUnavailable,
 }
 
 /// State type markers
@@ -168,12 +167,6 @@ impl MessageDeliverableSubscription for Subscription<state::Active> {
             message, self.id
         );
         Ok(())
-    }
-}
-
-impl MessageDeliverableSubscription for Subscription<state::Suspended> {
-    fn deliver_message(&self, _message: &str) -> Result<(), DeliveryError> {
-        Err(DeliveryError::TopicUnavailable)
     }
 }
 
@@ -424,9 +417,6 @@ mod tests {
         let active = pending.activate().unwrap();
 
         assert!(try_deliver_message(&active, "Test message"));
-
-        let suspended = active.suspend("Pause".to_string());
-        assert!(!try_deliver_message(&suspended, "Should fail"));
     }
 
     #[test]
@@ -515,6 +505,8 @@ mod tests {
         assert!(active.deliver_message("test").is_ok());
 
         let suspended = active.suspend("reason".to_string());
-        assert!(suspended.deliver_message("test").is_err());
+        // Suspended subscriptions do not implement MessageDeliverableSubscription,
+        // so delivery is prevented at compile time:
+        // suspended.deliver_message("test"); // no longer compiles
     }
 }
