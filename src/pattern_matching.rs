@@ -154,7 +154,7 @@ pub enum ConnectionState {
         user_id: u64,
         session_token: String,
     },
-    Error {
+    ConnectionError {
         error_code: u32,
         retry_after: Option<u64>,
     },
@@ -175,51 +175,54 @@ pub fn handle_connection_event(
     state: ConnectionState,
     event: ConnectionEvent,
 ) -> (ConnectionState, Vec<String>) {
+    use ConnectionEvent::*;
+    use ConnectionState::*;
+
     let mut actions = Vec::new();
 
     let new_state = match (state, event) {
         // From Disconnected state
-        (ConnectionState::Disconnected, ConnectionEvent::Connect) => {
+        (Disconnected, Connect) => {
             actions.push("Starting connection".to_string());
-            ConnectionState::Connecting { attempt: 1 }
+            Connecting { attempt: 1 }
         }
 
         // From Connecting state with retry logic
-        (ConnectionState::Connecting { attempt }, ConnectionEvent::Timeout) if attempt < 3 => {
+        (Connecting { attempt }, Timeout) if attempt < 3 => {
             actions.push(format!("Retrying connection (attempt {})", attempt + 1));
-            ConnectionState::Connecting {
+            Connecting {
                 attempt: attempt + 1,
             }
         }
 
-        (ConnectionState::Connecting { attempt }, ConnectionEvent::Timeout) => {
+        (Connecting { attempt }, Timeout) => {
             actions.push(format!("Max attempts reached ({})", attempt));
-            ConnectionState::Error {
+            ConnectionError {
                 error_code: 1001,
                 retry_after: Some(30),
             }
         }
 
-        (ConnectionState::Connecting { .. }, ConnectionEvent::Connect) => {
+        (Connecting { .. }, Connect) => {
             actions.push("Connection established".to_string());
-            ConnectionState::Connected {
+            Connected {
                 since: current_timestamp(),
             }
         }
 
         // From Connected state
-        (ConnectionState::Connected { .. }, ConnectionEvent::Authenticate(user_id, token)) => {
+        (Connected { .. }, Authenticate(user_id, token)) => {
             actions.push(format!("User {} authenticated", user_id));
-            ConnectionState::Authenticated {
+            Authenticated {
                 user_id,
                 session_token: token,
             }
         }
 
         // Error transitions from any state
-        (_, ConnectionEvent::Error(code)) => {
+        (_, Error(code)) => {
             actions.push(format!("Error occurred: {}", code));
-            ConnectionState::Error {
+            ConnectionError {
                 error_code: code,
                 retry_after: if code < 2000 { Some(10) } else { None },
             }
@@ -317,12 +320,13 @@ pub enum MessagePattern {
 impl MessagePattern {
     /// Check if a message matches this pattern
     pub fn matches(&self, text: &str) -> bool {
+        use MessagePattern::*;
         match self {
-            MessagePattern::Exact(s) => text == s,
-            MessagePattern::Prefix(s) => text.starts_with(s),
-            MessagePattern::Suffix(s) => text.ends_with(s),
-            MessagePattern::Contains(s) => text.contains(s),
-            MessagePattern::Regex(_) => {
+            Exact(s) => text == s,
+            Prefix(s) => text.starts_with(s),
+            Suffix(s) => text.ends_with(s),
+            Contains(s) => text.contains(s),
+            Regex(_) => {
                 // Simplified for demo - would use regex crate
                 true
             }
@@ -370,26 +374,27 @@ pub fn classify_message(message: &RichMessage) -> String {
 
 /// Match on multiple patterns with guards
 pub fn route_by_patterns(message: &RichMessage) -> Vec<&'static str> {
+    use MessageContent::*;
+    use Priority::*;
+
     let mut routes = Vec::new();
 
     // Match priority patterns
     match message.priority {
-        Priority::Critical => routes.push("emergency_handler"),
-        Priority::High if message.topic.starts_with("order.") => {
-            routes.push("priority_order_queue")
-        }
-        Priority::High => routes.push("high_priority_queue"),
+        Critical => routes.push("emergency_handler"),
+        High if message.topic.starts_with("order.") => routes.push("priority_order_queue"),
+        High => routes.push("high_priority_queue"),
         _ => {}
     }
 
     // Match content patterns
     match &message.content {
-        MessageContent::Json(json) => {
+        Json(json) => {
             if json.get("transaction_id").is_some() {
                 routes.push("transaction_processor");
             }
         }
-        MessageContent::Binary(data) if data.len() > 1024 * 1024 => {
+        Binary(data) if data.len() > 1024 * 1024 => {
             routes.push("large_file_handler");
         }
         _ => {}
