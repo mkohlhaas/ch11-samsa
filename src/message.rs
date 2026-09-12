@@ -5,9 +5,12 @@
 #[derive(Debug, Clone)]
 pub struct Message {
     pub topic: String,
-    pub key: Option<String>, // used for partitioning (messages with the same key go to the same partition)
+    /// used for partitioning (messages with the same key go to the same partition)
+    pub key: Option<String>,
     pub value: Vec<u8>,
     pub timestamp: u64,
+    /// Time the message was processed by a pipeline (if it has been)
+    pub processed_at: Option<u64>,
 }
 
 impl Message {
@@ -17,6 +20,7 @@ impl Message {
             key,
             value: value.into(),
             timestamp: current_timestamp(),
+            processed_at: None,
         }
     }
 

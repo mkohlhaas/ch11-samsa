@@ -251,9 +251,16 @@ where
     }
 }
 
+// ======== //
+// Pipeline //
+// ======== //
+
 /// Processing pipeline using closures
 type PipelineStage<T> = Box<dyn Fn(T) -> Result<T, Box<dyn Error + Send + Sync>> + Send + Sync>;
 
+/// A configurable processing pipeline generic over any value type T
+///
+/// In this code only `Message` is used for T.
 pub struct Pipeline<T> {
     stages: Vec<PipelineStage<T>>,
 }
@@ -275,6 +282,7 @@ where
         Self { stages: Vec::new() }
     }
 
+    // can fail
     pub fn add_stage<F>(mut self, stage: F) -> Self
     where
         F: Fn(T) -> Result<T, Box<dyn Error + Send + Sync>> + Send + Sync + 'static,
@@ -283,6 +291,7 @@ where
         self
     }
 
+    // always succeeds
     pub fn add_transformation<F>(self, transform: F) -> Self
     where
         F: Fn(T) -> T + Send + Sync + 'static,
@@ -320,9 +329,9 @@ pub fn create_message_pipeline() -> Pipeline<Message> {
             msg.topic = msg.topic.to_lowercase();
             msg
         })
-        .add_transformation(|msg| {
-            // Add processing timestamp (simplified for demo)
-            println!("Processing message at: {}", current_timestamp());
+        .add_transformation(|mut msg| {
+            // Add processing timestamp
+            msg.processed_at = Some(current_timestamp());
             msg
         })
         .add_stage(|msg| {
@@ -416,9 +425,13 @@ where
     }
 }
 
+// ============ //
+// Rate Limiter //
+// ============ //
+
 /// Rate limiting using closures
 pub struct RateLimiter<F> {
-    predicate: F,
+    operation: F,
     last_call: Arc<Mutex<Option<Instant>>>,
     interval: Duration,
 }
@@ -427,9 +440,9 @@ impl<F> RateLimiter<F>
 where
     F: Fn(),
 {
-    pub fn new(predicate: F, interval: Duration) -> Self {
+    pub fn new(operation: F, interval: Duration) -> Self {
         Self {
-            predicate,
+            operation,
             last_call: Arc::new(Mutex::new(None)),
             interval,
         }
@@ -446,7 +459,7 @@ where
         }
 
         *last_call = Some(now);
-        (self.predicate)();
+        (self.operation)();
     }
 }
 
