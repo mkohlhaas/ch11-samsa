@@ -28,6 +28,7 @@ where
         Self { predicate, name }
     }
 
+    // central function for MessageFilter
     pub fn matches(&self, message: &Message) -> bool {
         (self.predicate)(message)
     }
@@ -75,7 +76,7 @@ pub fn create_message_filters() -> (
         msg.topic.starts_with("system.")
     });
 
-    let recent_filter = MessageFilter::new("Recent Messages".to_string(), move |msg: &Message| {
+    let recent_filter = MessageFilter::new("Recent Messages".to_string(), |msg: &Message| {
         // Message is recent if it was created within the last hour
         let now = current_timestamp();
         now.saturating_sub(msg.timestamp) <= 3600
@@ -95,7 +96,7 @@ pub type RoutingStrategy = Box<dyn Fn(&Message) -> Vec<String> + Send + Sync>;
 
 pub struct MessageRouter {
     strategies: Vec<RoutingStrategy>,
-    default_targets: Vec<String>,
+    default_targets: Vec<String>, // vec of queues/queue names
 }
 
 impl Default for MessageRouter {
@@ -156,7 +157,7 @@ pub fn create_routing_strategies() -> MessageRouter {
 
     // API messages load-balanced across workers
     router.add_strategy({
-        let worker_count = 4;
+        let worker_count = 4; // in real code this would come from e.g. a configuration file
         move |msg| {
             if msg.topic.starts_with("api.") {
                 // Use topic hash for consistent routing
@@ -190,8 +191,8 @@ pub enum SystemEvent {
 
 /// Event handler type for a generic event type
 ///
-/// This type can be parameterized on any type T; in this code only
-/// `SystemEvent` is used.
+/// EventHandler is parameterized on any type T for events.
+/// In this code only `SystemEvent` is used for T.
 pub type EventHandler<T> = Box<dyn Fn(&T) + Send + Sync>;
 
 /// Simple event bus using closures
@@ -255,7 +256,8 @@ where
 // Pipeline //
 // ======== //
 
-/// Processing pipeline using closures
+/// Processing pipeline using closures.
+/// Every function is a stage going from T to T.
 type PipelineStage<T> = Box<dyn Fn(T) -> Result<T, Box<dyn Error + Send + Sync>> + Send + Sync>;
 
 /// A configurable processing pipeline generic over any value type T
@@ -312,6 +314,7 @@ where
         })
     }
 
+    // short-circuiting on first error
     pub fn execute(&self, input: T) -> Result<T, Box<dyn Error + Send + Sync>> {
         self.stages.iter().try_fold(input, |acc, stage| stage(acc))
     }
@@ -454,7 +457,7 @@ where
 
         if let Some(last) = *last_call {
             if now.duration_since(last) < self.interval {
-                return; // Rate limited
+                return; // Rate limited (not doing anything; no operation)
             }
         }
 
